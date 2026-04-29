@@ -110,12 +110,17 @@ function setup_schema(PDO $pdo): void
         CREATE TABLE IF NOT EXISTS simulado_attempts (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             respondent_name VARCHAR(120) NOT NULL,
+            exam_type VARCHAR(40) NOT NULL DEFAULT 'general',
+            exam_label VARCHAR(160) NOT NULL DEFAULT 'Bloco geral',
             started_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
             INDEX idx_started_at (started_at),
-            INDEX idx_respondent_name (respondent_name)
+            INDEX idx_respondent_name (respondent_name),
+            INDEX idx_exam_type (exam_type)
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    ensure_attempt_columns($pdo);
 
     $pdo->exec("
         CREATE TABLE IF NOT EXISTS simulado_answers (
@@ -138,6 +143,30 @@ function setup_schema(PDO $pdo): void
     seed_questions($pdo);
 }
 
+function column_exists(PDO $pdo, string $table, string $column): bool
+{
+    $stmt = $pdo->prepare("SHOW COLUMNS FROM {$table} LIKE :column");
+    $stmt->execute(['column' => $column]);
+    return (bool) $stmt->fetch();
+}
+
+function ensure_attempt_columns(PDO $pdo): void
+{
+    if (!column_exists($pdo, 'simulado_attempts', 'exam_type')) {
+        $pdo->exec("ALTER TABLE simulado_attempts ADD exam_type VARCHAR(40) NOT NULL DEFAULT 'general' AFTER respondent_name");
+    }
+
+    if (!column_exists($pdo, 'simulado_attempts', 'exam_label')) {
+        $pdo->exec("ALTER TABLE simulado_attempts ADD exam_label VARCHAR(160) NOT NULL DEFAULT 'Bloco geral' AFTER exam_type");
+    }
+
+    try {
+        $pdo->exec("ALTER TABLE simulado_attempts ADD INDEX idx_exam_type (exam_type)");
+    } catch (Throwable $e) {
+        // Índice já existente em instalações atualizadas.
+    }
+}
+
 function legacy_questions(): array
 {
     $questions = [];
@@ -157,6 +186,14 @@ function legacy_questions(): array
         $extraQuestions = require $extraPath;
         if (is_array($extraQuestions)) {
             $questions = array_merge($questions, $extraQuestions);
+        }
+    }
+
+    $conceptPath = __DIR__ . '/concept_questions.php';
+    if (is_file($conceptPath)) {
+        $conceptQuestions = require $conceptPath;
+        if (is_array($conceptQuestions)) {
+            $questions = array_merge($questions, $conceptQuestions);
         }
     }
 
@@ -226,7 +263,7 @@ function seed_questions(PDO $pdo): void
         @set_time_limit(180);
     }
 
-    $seedVersion = '2026-04-28-3';
+    $seedVersion = '2026-04-29-1';
     $count = (int) $pdo->query('SELECT COUNT(*) FROM simulado_questions')->fetchColumn();
     $versionStmt = $pdo->prepare('SELECT meta_value FROM simulado_schema_meta WHERE meta_key = :key');
     $versionStmt->execute(['key' => 'questions_seed_version']);
@@ -323,12 +360,74 @@ function request_body(): array
     return is_array($body) ? $body : [];
 }
 
+function exam_options(): array
+{
+    return [
+        'concepts' => [
+            'label' => 'Bloco de conceitos',
+            'question_ids' => range(201, 240),
+        ],
+        'general' => [
+            'label' => 'Bloco geral',
+        ],
+        'macro_collections' => [
+            'label' => 'Tema macro: Collections',
+            'themes' => ['List', 'Map'],
+        ],
+        'macro_oo' => [
+            'label' => 'Tema macro: Orientação a objetos',
+            'themes' => ['Classe Abstrata', 'Interface'],
+        ],
+        'macro_architecture' => [
+            'label' => 'Tema macro: Camadas, MVC e JDBC',
+            'themes' => ['Arquitetura em Camadas', 'JDBC', 'MVC e Camadas'],
+        ],
+        'macro_quality' => [
+            'label' => 'Tema macro: Qualidade de código',
+            'themes' => ['Clean Code', 'Nomes, Métodos, Atributos e Comentários', 'Coesão e Acoplamento', 'Números Mágicos e Constantes'],
+        ],
+    ];
+}
+
+function normalize_exam_type(string $examType): string
+{
+    $examType = trim($examType);
+    return isset(exam_options()[$examType]) ? $examType : 'general';
+}
+
+function exam_label(string $examType): string
+{
+    $options = exam_options();
+    return (string) ($options[$examType]['label'] ?? $options['general']['label']);
+}
+
+function question_allowed_for_exam(array $question, string $examType): bool
+{
+    $options = exam_options();
+    $config = $options[$examType] ?? $options['general'];
+    if ($examType === 'general') {
+        return true;
+    }
+
+    if (isset($config['question_ids'])) {
+        return in_array((int) $question['id'], $config['question_ids'], true);
+    }
+
+    if (isset($config['themes'])) {
+        return in_array((string) $question['theme'], $config['themes'], true);
+    }
+
+    return true;
+}
+
 function ranking(PDO $pdo): array
 {
     $rows = $pdo->query("
         SELECT
             a.id,
             a.respondent_name,
+            a.exam_type,
+            a.exam_label,
             a.started_at,
             a.updated_at,
             COUNT(ans.id) AS answered_count,
@@ -339,7 +438,7 @@ function ranking(PDO $pdo): array
             END AS percent_correct
         FROM simulado_attempts a
         LEFT JOIN simulado_answers ans ON ans.attempt_id = a.id
-        GROUP BY a.id, a.respondent_name, a.started_at, a.updated_at
+        GROUP BY a.id, a.respondent_name, a.exam_type, a.exam_label, a.started_at, a.updated_at
         ORDER BY percent_correct DESC, correct_count DESC, answered_count DESC, a.updated_at ASC
         LIMIT 100
     ")->fetchAll();
@@ -348,6 +447,8 @@ function ranking(PDO $pdo): array
     foreach ($rows as &$row) {
         $row['position'] = $position++;
         $row['id'] = (int) $row['id'];
+        $row['exam_type'] = (string) ($row['exam_type'] ?? 'general');
+        $row['exam_label'] = (string) ($row['exam_label'] ?? exam_label($row['exam_type']));
         $row['answered_count'] = (int) $row['answered_count'];
         $row['correct_count'] = (int) $row['correct_count'];
         $row['percent_correct'] = (float) $row['percent_correct'];
@@ -356,14 +457,24 @@ function ranking(PDO $pdo): array
     return $rows;
 }
 
-function questions(PDO $pdo): array
+function questions(PDO $pdo, string $examType = 'general'): array
 {
+    $examType = normalize_exam_type($examType);
     $questionRows = $pdo->query("
         SELECT id, theme, stem
         FROM simulado_questions
         WHERE active = 1
         ORDER BY position ASC, id ASC
     ")->fetchAll();
+
+    if ($questionRows === []) {
+        return [];
+    }
+
+    $questionRows = array_values(array_filter(
+        $questionRows,
+        static fn(array $question): bool => question_allowed_for_exam($question, $examType)
+    ));
 
     if ($questionRows === []) {
         return [];
@@ -384,15 +495,21 @@ function questions(PDO $pdo): array
         ];
     }
 
-    return array_map(static function (array $question) use ($optionsByQuestion): array {
+    $questions = array_map(static function (array $question) use ($optionsByQuestion): array {
         $id = (int) $question['id'];
+        $options = $optionsByQuestion[$id] ?? [];
+        shuffle($options);
         return [
             'id' => $id,
             'theme' => $question['theme'],
             'stem' => $question['stem'],
-            'options' => $optionsByQuestion[$id] ?? [],
+            'options' => $options,
         ];
     }, $questionRows);
+
+    shuffle($questions);
+
+    return $questions;
 }
 
 function answer_feedback(PDO $pdo, int $questionId, int $selectedAnswer): array
@@ -470,7 +587,8 @@ try {
     }
 
     if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'questions') {
-        json_response(['ok' => true, 'questions' => questions($pdo)]);
+        $examType = normalize_exam_type((string) ($_GET['exam_type'] ?? 'general'));
+        json_response(['ok' => true, 'questions' => questions($pdo, $examType)]);
     }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'start') {
@@ -481,14 +599,30 @@ try {
         }
 
         $name = function_exists('mb_substr') ? mb_substr($name, 0, 120) : substr($name, 0, 120);
-        $stmt = $pdo->prepare('INSERT INTO simulado_attempts (respondent_name) VALUES (:name)');
-        $stmt->execute(['name' => $name]);
+        $examType = normalize_exam_type((string) ($body['exam_type'] ?? 'general'));
+        $examLabel = exam_label($examType);
+        $selectedQuestions = questions($pdo, $examType);
+        if ($selectedQuestions === []) {
+            json_response(['ok' => false, 'message' => 'Nenhuma pergunta encontrada para este tipo de prova.'], 422);
+        }
+
+        $stmt = $pdo->prepare('
+            INSERT INTO simulado_attempts (respondent_name, exam_type, exam_label)
+            VALUES (:name, :exam_type, :exam_label)
+        ');
+        $stmt->execute([
+            'name' => $name,
+            'exam_type' => $examType,
+            'exam_label' => $examLabel,
+        ]);
 
         json_response([
             'ok' => true,
             'attempt_id' => (int) $pdo->lastInsertId(),
             'respondent_name' => $name,
-            'questions' => questions($pdo),
+            'exam_type' => $examType,
+            'exam_label' => $examLabel,
+            'questions' => $selectedQuestions,
         ]);
     }
 

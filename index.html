@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Simulado Java POO II - 100 Questões</title>
-  <link rel="stylesheet" href="style.css?v=20260429-2">
+  <title>Simulado Java POO II</title>
+  <link rel="stylesheet" href="style.css?v=20260429-3">
 </head>
 <body>
   <div class="app">
@@ -12,7 +12,7 @@
       <div class="intro-panel">
         <div>
           <h1>Simulado Java — POO II</h1>
-          <p>Informe seu nome para iniciar uma nova tentativa.</p>
+          <p>Informe seu nome, escolha o tipo de prova e inicie uma nova tentativa.</p>
         </div>
         <form id="startForm" class="start-form">
           <label for="respondentName">Nome do respondente</label>
@@ -20,6 +20,51 @@
             <input id="respondentName" name="respondentName" type="text" maxlength="120" autocomplete="name" required>
             <button id="startBtn" type="submit">Iniciar simulado</button>
           </div>
+          <fieldset class="exam-picker">
+            <legend>Tipo de prova</legend>
+            <label>
+              <input type="radio" name="examType" value="concepts" checked>
+              <span>
+                <strong>Conceitos e definições</strong>
+                <small>40 perguntas sobre papéis, definições e fundamentos.</small>
+              </span>
+            </label>
+            <label>
+              <input type="radio" name="examType" value="general">
+              <span>
+                <strong>Bloco geral</strong>
+                <small>Todas as perguntas disponíveis, incluindo as novas.</small>
+              </span>
+            </label>
+            <label>
+              <input type="radio" name="examType" value="macro_collections">
+              <span>
+                <strong>Collections</strong>
+                <small>Listas e Map.</small>
+              </span>
+            </label>
+            <label>
+              <input type="radio" name="examType" value="macro_oo">
+              <span>
+                <strong>Orientação a objetos</strong>
+                <small>Classe abstrata e interface.</small>
+              </span>
+            </label>
+            <label>
+              <input type="radio" name="examType" value="macro_architecture">
+              <span>
+                <strong>Camadas, MVC e JDBC</strong>
+                <small>Controller, View, Service, Repository, Model e banco.</small>
+              </span>
+            </label>
+            <label>
+              <input type="radio" name="examType" value="macro_quality">
+              <span>
+                <strong>Qualidade de código</strong>
+                <small>Clean Code, nomes, coesão, acoplamento e números mágicos.</small>
+              </span>
+            </label>
+          </fieldset>
           <p id="startError" class="form-error hidden"></p>
         </form>
       </div>
@@ -35,6 +80,7 @@
               <tr>
                 <th>Posição</th>
                 <th>Nome</th>
+                <th>Prova</th>
                 <th>Respondidas</th>
                 <th>Acertos</th>
                 <th>% acertos</th>
@@ -42,7 +88,7 @@
               </tr>
             </thead>
             <tbody id="rankingBody">
-              <tr><td colspan="6">Carregando ranking...</td></tr>
+              <tr><td colspan="7">Carregando ranking...</td></tr>
             </tbody>
           </table>
         </div>
@@ -95,6 +141,6 @@
     </section>
   </div>
 
-  <script src="app.js?v=20260429-2"></script>
+  <script src="app.js?v=20260429-3"></script>
 </body>
 </html>

@@ -10,6 +10,7 @@ const startScreen = document.getElementById('startScreen');
 const quizScreen = document.getElementById('quizScreen');
 const startForm = document.getElementById('startForm');
 const respondentNameInput = document.getElementById('respondentName');
+const examTypeInputs = Array.from(document.querySelectorAll('input[name="examType"]'));
 const startBtn = document.getElementById('startBtn');
 const startError = document.getElementById('startError');
 const rankingBody = document.getElementById('rankingBody');
@@ -81,7 +82,7 @@ async function api(action, options = {}){
 
 function renderRanking(rows){
   if(!rows.length){
-    rankingBody.innerHTML = '<tr><td colspan="6">Nenhuma tentativa registrada ainda.</td></tr>';
+    rankingBody.innerHTML = '<tr><td colspan="7">Nenhuma tentativa registrada ainda.</td></tr>';
     return;
   }
 
@@ -89,6 +90,7 @@ function renderRanking(rows){
     <tr>
       <td>${row.position}</td>
       <td>${escapeHtml(row.respondent_name)}</td>
+      <td>${escapeHtml(row.exam_label || 'Bloco geral')}</td>
       <td>${row.answered_count}</td>
       <td>${row.correct_count}</td>
       <td>${Number(row.percent_correct).toFixed(2)}%</td>
@@ -102,7 +104,7 @@ async function loadRanking(){
     const data = await api('ranking');
     renderRanking(data.ranking || []);
   }catch(error){
-    rankingBody.innerHTML = `<tr><td colspan="6">${escapeHtml(error.message)}</td></tr>`;
+    rankingBody.innerHTML = `<tr><td colspan="7">${escapeHtml(error.message)}</td></tr>`;
   }
 }
 
@@ -110,7 +112,10 @@ function normalizeQuestions(rows){
   QUESTIONS = rows.map((question, index) => ({
     ...question,
     number: index + 1,
-    options: question.options || []
+    options: (question.options || []).map((option, displayIndex) => ({
+      ...option,
+      displayIndex
+    }))
   }));
   answers = QUESTIONS.map(() => ({
     selected: null,
@@ -121,6 +126,11 @@ function normalizeQuestions(rows){
     feedback: [],
     error: ''
   }));
+}
+
+function displayLetterForOption(question, optionIndex){
+  const option = question.options.find((item) => item.index === optionIndex);
+  return letter(option ? option.displayIndex : optionIndex);
 }
 
 function startTimer(){
@@ -215,7 +225,7 @@ function renderFeedback(state){
       const selectedOption = q.options.find((opt) => opt.index === state.selected);
       feedbackEl.className = 'feedback confirm';
       feedbackEl.innerHTML = `
-        <h3>Confirmar resposta ${letter(state.selected)})?</h3>
+        <h3>Confirmar resposta ${displayLetterForOption(q, state.selected)})?</h3>
         <p>${escapeHtml(selectedOption ? selectedOption.text : '')}</p>
         <div class="confirm-actions">
           <button type="button" id="confirmAnswerBtn">Confirmar</button>
@@ -236,13 +246,15 @@ function renderFeedback(state){
   }
 
   feedbackEl.className = 'feedback ' + (state.isCorrect ? 'ok' : 'bad');
+  const q = QUESTIONS[current];
   const title = state.isCorrect
     ? 'Voce acertou.'
-    : `Voce errou. Resposta correta: ${letter(state.correctAnswer)}.`;
-  const items = state.feedback.map((item) => {
+    : `Voce errou. Resposta correta: ${displayLetterForOption(q, state.correctAnswer)}.`;
+  const feedbackByIndex = new Map(state.feedback.map((item) => [item.index, item]));
+  const items = q.options.map((option) => feedbackByIndex.get(option.index)).filter(Boolean).map((item) => {
     const mark = item.is_correct ? 'Correta' : 'Incorreta';
     const chosen = item.selected ? ' <strong>(sua resposta)</strong>' : '';
-    return `<li><strong>${mark} ${letter(item.index)})</strong>${chosen} ${escapeHtml(item.explanation)}</li>`;
+    return `<li><strong>${mark} ${displayLetterForOption(q, item.index)})</strong>${chosen} ${escapeHtml(item.explanation)}</li>`;
   }).join('');
   feedbackEl.innerHTML = `<h3>${title}</h3><p>Justificativa item a item:</p><ul>${items}</ul>`;
 }
@@ -273,7 +285,7 @@ function render(){
     }
     label.innerHTML = `
       <input type="radio" name="answer" ${state.selected === optionIndex ? 'checked' : ''} ${state.saving || state.saved ? 'disabled' : ''}>
-      <span class="letter">${letter(optionIndex)})</span>
+      <span class="letter">${letter(opt.displayIndex)})</span>
       <span>${escapeHtml(opt.text)}</span>
     `;
     label.onclick = () => {
@@ -309,15 +321,16 @@ startForm.onsubmit = async (event) => {
 
   startBtn.disabled = true;
   try{
+    const selectedExamType = examTypeInputs.find(input => input.checked)?.value || 'concepts';
     const data = await api('start', {
       method: 'POST',
-      body: JSON.stringify({ name })
+      body: JSON.stringify({ name, exam_type: selectedExamType })
     });
 
     normalizeQuestions(data.questions || []);
     attemptId = data.attempt_id;
     respondentName = data.respondent_name;
-    activeRespondent.textContent = `Respondente: ${respondentName}`;
+    activeRespondent.textContent = `Respondente: ${respondentName} | ${data.exam_label || 'Bloco geral'}`;
     startScreen.classList.add('hidden');
     quizScreen.classList.remove('hidden');
     current = 0;
