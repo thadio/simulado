@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Simulado Java POO II - 100 Questões</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div>
+        <h1>Simulado Java — POO II</h1>
+        <p>List, Map, Clean Code, Classe Abstrata, Interface, Arquitetura em Camadas, JDBC, Coesão, Acoplamento e Números Mágicos</p>
+      </div>
+      <div class="score-card">
+        <span id="score">0</span>/<span id="answered">0</span>
+        <small>acertos/respondidas</small>
+      </div>
+    </header>
+
+    <section class="progress-wrap">
+      <div class="progress-info">
+        <strong id="themeName">Tema</strong>
+        <span id="questionCounter">Questão 1 de 100</span>
+      </div>
+      <div class="progress-bar"><div id="progressFill"></div></div>
+    </section>
+
+    <main class="card">
+      <h2 id="questionTitle"></h2>
+      <p id="questionText"></p>
+
+      <div id="options" class="options"></div>
+
+      <div id="feedback" class="feedback hidden"></div>
+
+      <div class="actions">
+        <button id="prevBtn" class="secondary">← Voltar</button>
+        <button id="nextBtn">Próxima →</button>
+      </div>
+    </main>
+
+    <section class="navigator">
+      <h3>Ir para qualquer questão</h3>
+      <div id="questionGrid" class="question-grid"></div>
+    </section>
+  </div>
+
+  <script src="questions.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
