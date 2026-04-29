@@ -67,6 +67,46 @@ function db(): PDO
 function setup_schema(PDO $pdo): void
 {
     $pdo->exec("
+        CREATE TABLE IF NOT EXISTS simulado_schema_meta (
+            meta_key VARCHAR(80) PRIMARY KEY,
+            meta_value VARCHAR(255) NOT NULL,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS simulado_questions (
+            id INT UNSIGNED PRIMARY KEY,
+            theme VARCHAR(120) NOT NULL,
+            stem TEXT NOT NULL,
+            position INT UNSIGNED NOT NULL,
+            active TINYINT(1) NOT NULL DEFAULT 1,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            INDEX idx_position (position),
+            INDEX idx_theme (theme)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    $pdo->exec("
+        CREATE TABLE IF NOT EXISTS simulado_question_options (
+            id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            question_id INT UNSIGNED NOT NULL,
+            option_index TINYINT UNSIGNED NOT NULL,
+            option_text TEXT NOT NULL,
+            explanation TEXT NOT NULL,
+            is_correct TINYINT(1) NOT NULL DEFAULT 0,
+            created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            UNIQUE KEY uq_question_option (question_id, option_index),
+            INDEX idx_question_id (question_id),
+            CONSTRAINT fk_simulado_question_options_question
+                FOREIGN KEY (question_id) REFERENCES simulado_questions(id)
+                ON DELETE CASCADE
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    ");
+
+    $pdo->exec("
         CREATE TABLE IF NOT EXISTS simulado_attempts (
             id INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
             respondent_name VARCHAR(120) NOT NULL,
@@ -94,6 +134,187 @@ function setup_schema(PDO $pdo): void
                 ON DELETE CASCADE
         ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     ");
+
+    seed_questions($pdo);
+}
+
+function legacy_questions(): array
+{
+    $questions = [];
+    $path = __DIR__ . '/questions.js';
+    if (is_file($path)) {
+        $contents = trim((string) file_get_contents($path));
+        $contents = preg_replace('/^const\s+QUESTIONS\s*=\s*/', '', $contents);
+        $contents = preg_replace('/;\s*$/', '', (string) $contents);
+        $decodedQuestions = json_decode((string) $contents, true);
+        if (is_array($decodedQuestions)) {
+            $questions = $decodedQuestions;
+        }
+    }
+
+    $extraPath = __DIR__ . '/extra_questions.php';
+    if (is_file($extraPath)) {
+        $extraQuestions = require $extraPath;
+        if (is_array($extraQuestions)) {
+            $questions = array_merge($questions, $extraQuestions);
+        }
+    }
+
+    return $questions;
+}
+
+function improve_stem(string $theme, string $stem): string
+{
+    $stem = trim($stem);
+    $prefixes = [
+        'List' => 'Sobre List em Java Collections',
+        'Map' => 'Sobre Map em Java Collections',
+        'Classe Abstrata' => 'Sobre classes abstratas em Java',
+        'Interface' => 'Sobre interfaces em Java',
+        'Arquitetura em Camadas' => 'Em uma arquitetura em camadas',
+        'JDBC' => 'Sobre JDBC',
+        'Clean Code' => 'Considerando Clean Code',
+        'Nomes, Métodos, Atributos e Comentários' => 'Sobre nomes, métodos, atributos e comentários',
+        'Coesão e Acoplamento' => 'Sobre coesão e acoplamento',
+        'Números Mágicos e Constantes' => 'Sobre números mágicos e constantes',
+    ];
+
+    if (str_ends_with($stem, ':')) {
+        $stem = rtrim($stem, ':') . '?';
+    }
+
+    if (preg_match('/^(Qual|Em|Uma|Um|Por que|Se|No|Quando|O que|Diferença)/u', $stem)) {
+        return $stem;
+    }
+
+    return ($prefixes[$theme] ?? 'Sobre o tema') . ', ' . lcfirst($stem);
+}
+
+function improve_explanation(string $theme, string $option, bool $isCorrect): string
+{
+    $option = rtrim(trim($option), ". \t\n\r\0\x0B");
+    if ($isCorrect) {
+        return "Correta: {$option}. Esta alternativa aplica o conceito de {$theme} de forma precisa e representa a prática esperada em Java.";
+    }
+
+    $lower = function_exists('mb_strtolower') ? mb_strtolower($option, 'UTF-8') : strtolower($option);
+    if (str_contains($lower, 'sempre') || str_contains($lower, 'nunca') || str_contains($lower, 'obrigatória')) {
+        return "Incorreta: {$option}. A afirmação é absoluta demais; em {$theme}, o comportamento depende da API, da implementação e do contexto de uso.";
+    }
+    if (str_contains($lower, 'map') || str_contains($lower, 'chave') || str_contains($lower, 'valor')) {
+        return "Incorreta: {$option}. Essa ideia pertence a estruturas chave-valor ou a outro contexto, não ao conceito cobrado nesta questão sobre {$theme}.";
+    }
+    if (str_contains($lower, 'list') || str_contains($lower, 'set') || str_contains($lower, 'arraylist') || str_contains($lower, 'linkedlist')) {
+        return "Incorreta: {$option}. A alternativa mistura características de coleções diferentes ou usa uma implementação que não resolve o cenário apresentado.";
+    }
+    if (str_contains($lower, 'controller') || str_contains($lower, 'service') || str_contains($lower, 'repository') || str_contains($lower, 'view')) {
+        return "Incorreta: {$option}. A responsabilidade citada fica na camada errada; separar papéis é essencial para manter baixo acoplamento e boa manutenção.";
+    }
+    if (str_contains($lower, 'sql') || str_contains($lower, 'jdbc') || str_contains($lower, 'connection') || str_contains($lower, 'resultset')) {
+        return "Incorreta: {$option}. O item confunde uma API ou recurso de persistência com o conceito específico que a pergunta está avaliando.";
+    }
+    if (str_contains($lower, 'não compila') || str_contains($lower, 'erro') || str_contains($lower, 'exception')) {
+        return "Incorreta: {$option}. Essa consequência não é garantida pelo conceito; pode haver erro em outros cenários, mas não é a resposta técnica desta questão.";
+    }
+
+    return "Incorreta: {$option}. A alternativa não descreve corretamente o conceito de {$theme} cobrado na pergunta.";
+}
+
+function seed_questions(PDO $pdo): void
+{
+    if (function_exists('set_time_limit')) {
+        @set_time_limit(180);
+    }
+
+    $seedVersion = '2026-04-28-3';
+    $count = (int) $pdo->query('SELECT COUNT(*) FROM simulado_questions')->fetchColumn();
+    $versionStmt = $pdo->prepare('SELECT meta_value FROM simulado_schema_meta WHERE meta_key = :key');
+    $versionStmt->execute(['key' => 'questions_seed_version']);
+    $currentVersion = (string) ($versionStmt->fetchColumn() ?: '');
+
+    if ($count > 0 && $currentVersion === $seedVersion) {
+        return;
+    }
+
+    $questions = legacy_questions();
+    if ($questions === []) {
+        return;
+    }
+
+    $existingIds = [];
+    if ($count > 0) {
+        $existingIds = array_flip(array_map('intval', $pdo->query('SELECT id FROM simulado_questions')->fetchAll(PDO::FETCH_COLUMN)));
+    }
+
+    $pdo->beginTransaction();
+    try {
+        $questionStmt = $pdo->prepare("
+            INSERT INTO simulado_questions (id, theme, stem, position)
+            VALUES (:id, :theme, :stem, :position)
+            ON DUPLICATE KEY UPDATE
+                theme = VALUES(theme),
+                stem = VALUES(stem),
+                position = VALUES(position),
+                active = 1,
+                updated_at = CURRENT_TIMESTAMP
+        ");
+        $optionStmt = $pdo->prepare("
+            INSERT INTO simulado_question_options
+                (question_id, option_index, option_text, explanation, is_correct)
+            VALUES
+                (:question_id, :option_index, :option_text, :explanation, :is_correct)
+            ON DUPLICATE KEY UPDATE
+                option_text = VALUES(option_text),
+                explanation = VALUES(explanation),
+                is_correct = VALUES(is_correct),
+                updated_at = CURRENT_TIMESTAMP
+        ");
+
+        foreach ($questions as $position => $question) {
+            $questionId = (int) ($question['id'] ?? ($position + 1));
+            if ($currentVersion !== '' && isset($existingIds[$questionId])) {
+                continue;
+            }
+
+            $theme = trim((string) ($question['theme'] ?? 'Geral'));
+            $questionStmt->execute([
+                'id' => $questionId,
+                'theme' => $theme,
+                'stem' => improve_stem($theme, (string) ($question['stem'] ?? '')),
+                'position' => $position + 1,
+            ]);
+
+            $correctIndex = (int) ($question['answer'] ?? -1);
+            foreach (($question['options'] ?? []) as $index => $option) {
+                $isCorrect = (int) $index === $correctIndex;
+                $explanation = (string) ($question['explanations'][$index] ?? improve_explanation($theme, (string) $option, $isCorrect));
+                $optionStmt->execute([
+                    'question_id' => $questionId,
+                    'option_index' => (int) $index,
+                    'option_text' => (string) $option,
+                    'explanation' => $explanation,
+                    'is_correct' => $isCorrect ? 1 : 0,
+                ]);
+            }
+        }
+
+        $metaStmt = $pdo->prepare("
+            INSERT INTO simulado_schema_meta (meta_key, meta_value)
+            VALUES (:key, :value)
+            ON DUPLICATE KEY UPDATE
+                meta_value = VALUES(meta_value),
+                updated_at = CURRENT_TIMESTAMP
+        ");
+        $metaStmt->execute([
+            'key' => 'questions_seed_version',
+            'value' => $seedVersion,
+        ]);
+
+        $pdo->commit();
+    } catch (Throwable $e) {
+        $pdo->rollBack();
+        throw $e;
+    }
 }
 
 function request_body(): array
@@ -135,12 +356,121 @@ function ranking(PDO $pdo): array
     return $rows;
 }
 
+function questions(PDO $pdo): array
+{
+    $questionRows = $pdo->query("
+        SELECT id, theme, stem
+        FROM simulado_questions
+        WHERE active = 1
+        ORDER BY position ASC, id ASC
+    ")->fetchAll();
+
+    if ($questionRows === []) {
+        return [];
+    }
+
+    $optionRows = $pdo->query("
+        SELECT question_id, option_index, option_text
+        FROM simulado_question_options
+        ORDER BY question_id ASC, option_index ASC
+    ")->fetchAll();
+
+    $optionsByQuestion = [];
+    foreach ($optionRows as $option) {
+        $questionId = (int) $option['question_id'];
+        $optionsByQuestion[$questionId][] = [
+            'index' => (int) $option['option_index'],
+            'text' => $option['option_text'],
+        ];
+    }
+
+    return array_map(static function (array $question) use ($optionsByQuestion): array {
+        $id = (int) $question['id'];
+        return [
+            'id' => $id,
+            'theme' => $question['theme'],
+            'stem' => $question['stem'],
+            'options' => $optionsByQuestion[$id] ?? [],
+        ];
+    }, $questionRows);
+}
+
+function answer_feedback(PDO $pdo, int $questionId, int $selectedAnswer): array
+{
+    $stmt = $pdo->prepare("
+        SELECT option_index, option_text, explanation, is_correct
+        FROM simulado_question_options
+        WHERE question_id = :question_id
+        ORDER BY option_index ASC
+    ");
+    $stmt->execute(['question_id' => $questionId]);
+    $options = $stmt->fetchAll();
+
+    if ($options === []) {
+        json_response(['ok' => false, 'message' => 'Questão não encontrada.'], 404);
+    }
+
+    $correctAnswer = null;
+    $selectedExists = false;
+    $feedback = [];
+    foreach ($options as $option) {
+        $index = (int) $option['option_index'];
+        $isCorrect = (int) $option['is_correct'] === 1;
+        if ($index === $selectedAnswer) {
+            $selectedExists = true;
+        }
+        if ($isCorrect) {
+            $correctAnswer = $index;
+        }
+        $feedback[] = [
+            'index' => $index,
+            'text' => $option['option_text'],
+            'explanation' => $option['explanation'],
+            'is_correct' => $isCorrect,
+            'selected' => $index === $selectedAnswer,
+        ];
+    }
+
+    if (!$selectedExists || $correctAnswer === null) {
+        json_response(['ok' => false, 'message' => 'Alternativa inválida.'], 422);
+    }
+
+    return [
+        'selected_answer' => $selectedAnswer,
+        'correct_answer' => $correctAnswer,
+        'is_correct' => $selectedAnswer === $correctAnswer,
+        'feedback' => $feedback,
+    ];
+}
+
+function attempt_score(PDO $pdo, int $attemptId): array
+{
+    $stmt = $pdo->prepare("
+        SELECT
+            COUNT(*) AS answered_count,
+            COALESCE(SUM(is_correct), 0) AS correct_count
+        FROM simulado_answers
+        WHERE attempt_id = :attempt_id
+    ");
+    $stmt->execute(['attempt_id' => $attemptId]);
+    $row = $stmt->fetch() ?: ['answered_count' => 0, 'correct_count' => 0];
+
+    return [
+        'answered_count' => (int) $row['answered_count'],
+        'correct_count' => (int) $row['correct_count'],
+    ];
+}
+
 try {
     $pdo = db();
     $action = $_GET['action'] ?? '';
 
     if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'ranking') {
         json_response(['ok' => true, 'ranking' => ranking($pdo)]);
+    }
+
+    if ($_SERVER['REQUEST_METHOD'] === 'GET' && $action === 'questions') {
+        json_response(['ok' => true, 'questions' => questions($pdo)]);
     }
 
     if ($_SERVER['REQUEST_METHOD'] === 'POST' && $action === 'start') {
@@ -158,6 +488,7 @@ try {
             'ok' => true,
             'attempt_id' => (int) $pdo->lastInsertId(),
             'respondent_name' => $name,
+            'questions' => questions($pdo),
         ]);
     }
 
@@ -166,11 +497,18 @@ try {
         $attemptId = (int) ($body['attempt_id'] ?? 0);
         $questionId = (int) ($body['question_id'] ?? 0);
         $selectedAnswer = (int) ($body['selected_answer'] ?? -1);
-        $correctAnswer = (int) ($body['correct_answer'] ?? -1);
 
-        if ($attemptId <= 0 || $questionId <= 0 || $selectedAnswer < 0 || $correctAnswer < 0) {
+        if ($attemptId <= 0 || $questionId <= 0 || $selectedAnswer < 0) {
             json_response(['ok' => false, 'message' => 'Dados de resposta inválidos.'], 422);
         }
+
+        $attemptStmt = $pdo->prepare('SELECT id FROM simulado_attempts WHERE id = :id');
+        $attemptStmt->execute(['id' => $attemptId]);
+        if (!$attemptStmt->fetch()) {
+            json_response(['ok' => false, 'message' => 'Tentativa não encontrada.'], 404);
+        }
+
+        $answer = answer_feedback($pdo, $questionId, $selectedAnswer);
 
         $stmt = $pdo->prepare("
             INSERT INTO simulado_answers
@@ -187,14 +525,19 @@ try {
             'attempt_id' => $attemptId,
             'question_id' => $questionId,
             'selected_answer' => $selectedAnswer,
-            'correct_answer' => $correctAnswer,
-            'is_correct' => $selectedAnswer === $correctAnswer ? 1 : 0,
+            'correct_answer' => $answer['correct_answer'],
+            'is_correct' => $answer['is_correct'] ? 1 : 0,
         ]);
 
         $pdo->prepare('UPDATE simulado_attempts SET updated_at = CURRENT_TIMESTAMP WHERE id = :id')
             ->execute(['id' => $attemptId]);
 
-        json_response(['ok' => true, 'ranking' => ranking($pdo)]);
+        json_response([
+            'ok' => true,
+            'answer' => $answer,
+            'score' => attempt_score($pdo, $attemptId),
+            'ranking' => ranking($pdo),
+        ]);
     }
 
     json_response(['ok' => false, 'message' => 'Endpoint não encontrado.'], 404);

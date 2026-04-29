@@ -1,7 +1,10 @@
+let QUESTIONS = [];
 let current = 0;
-const answers = Array(QUESTIONS.length).fill(null);
+let answers = [];
 let attemptId = null;
 let respondentName = '';
+let startedAt = null;
+let timerId = null;
 
 const startScreen = document.getElementById('startScreen');
 const quizScreen = document.getElementById('quizScreen');
@@ -14,6 +17,8 @@ const refreshRankingBtn = document.getElementById('refreshRankingBtn');
 const activeRespondent = document.getElementById('activeRespondent');
 const scoreEl = document.getElementById('score');
 const answeredEl = document.getElementById('answered');
+const percentEl = document.getElementById('percentScore');
+const timerEl = document.getElementById('timer');
 const themeName = document.getElementById('themeName');
 const questionCounter = document.getElementById('questionCounter');
 const progressFill = document.getElementById('progressFill');
@@ -25,7 +30,7 @@ const prevBtn = document.getElementById('prevBtn');
 const nextBtn = document.getElementById('nextBtn');
 const questionGrid = document.getElementById('questionGrid');
 
-function letter(i){ return String.fromCharCode(65+i); }
+function letter(i){ return String.fromCharCode(65 + i); }
 
 function formatDate(value){
   if(!value) return '-';
@@ -38,6 +43,13 @@ function formatDate(value){
     hour: '2-digit',
     minute: '2-digit'
   });
+}
+
+function formatElapsed(ms){
+  const totalSeconds = Math.max(0, Math.floor(ms / 1000));
+  const minutes = String(Math.floor(totalSeconds / 60)).padStart(2, '0');
+  const seconds = String(totalSeconds % 60).padStart(2, '0');
+  return `${minutes}:${seconds}`;
 }
 
 function escapeHtml(value){
@@ -90,13 +102,45 @@ async function loadRanking(){
     const data = await api('ranking');
     renderRanking(data.ranking || []);
   }catch(error){
-    rankingBody.innerHTML = `<tr><td colspan="6">${error.message}</td></tr>`;
+    rankingBody.innerHTML = `<tr><td colspan="6">${escapeHtml(error.message)}</td></tr>`;
   }
+}
+
+function normalizeQuestions(rows){
+  QUESTIONS = rows.map((question, index) => ({
+    ...question,
+    number: index + 1,
+    options: question.options || []
+  }));
+  answers = QUESTIONS.map(() => ({
+    selected: null,
+    saving: false,
+    saved: false,
+    isCorrect: false,
+    correctAnswer: null,
+    feedback: [],
+    error: ''
+  }));
+}
+
+function startTimer(){
+  startedAt = Date.now();
+  clearInterval(timerId);
+  timerId = setInterval(() => {
+    timerEl.textContent = formatElapsed(Date.now() - startedAt);
+  }, 1000);
+  timerEl.textContent = '00:00';
 }
 
 async function saveAnswer(questionIndex, selected){
   if(!attemptId) return;
   const q = QUESTIONS[questionIndex];
+  const state = answers[questionIndex];
+  state.selected = selected;
+  state.saving = true;
+  state.saved = false;
+  state.error = '';
+  render();
 
   try{
     const data = await api('answer', {
@@ -104,88 +148,120 @@ async function saveAnswer(questionIndex, selected){
       body: JSON.stringify({
         attempt_id: attemptId,
         question_id: q.id,
-        selected_answer: selected,
-        correct_answer: q.answer
+        selected_answer: selected
       })
     });
+
+    state.saving = false;
+    state.saved = true;
+    state.isCorrect = Boolean(data.answer.is_correct);
+    state.correctAnswer = data.answer.correct_answer;
+    state.feedback = data.answer.feedback || [];
+    if(data.score) updateScore(data.score);
     if(data.ranking) renderRanking(data.ranking);
   }catch(error){
+    state.saving = false;
+    state.saved = false;
+    state.error = `Não foi possível gravar a resposta: ${error.message}`;
     setStartError(`Não foi possível gravar a resposta: ${error.message}`);
   }
+
+  render();
 }
 
 function renderGrid(){
   questionGrid.innerHTML = '';
   QUESTIONS.forEach((q, i) => {
+    const state = answers[i];
     const btn = document.createElement('button');
     btn.className = 'qbtn';
     btn.textContent = i + 1;
     if(i === current) btn.classList.add('current');
-    if(answers[i] !== null){
+    if(state.selected !== null){
       btn.classList.add('done');
-      btn.classList.add(answers[i] === q.answer ? 'correct' : 'wrong');
+      if(state.saved) btn.classList.add(state.isCorrect ? 'correct' : 'wrong');
     }
     btn.onclick = () => { current = i; render(); };
     questionGrid.appendChild(btn);
   });
 }
 
-function updateScore(){
-  const answered = answers.filter(a => a !== null).length;
-  const score = answers.reduce((acc, a, i) => acc + (a === QUESTIONS[i].answer ? 1 : 0), 0);
+function updateScore(serverScore = null){
+  const answered = serverScore ? serverScore.answered_count : answers.filter(a => a.saved).length;
+  const score = serverScore ? serverScore.correct_count : answers.filter(a => a.saved && a.isCorrect).length;
+  const percent = answered === 0 ? 0 : (score / answered) * 100;
   scoreEl.textContent = score;
   answeredEl.textContent = answered;
+  percentEl.textContent = `${percent.toFixed(1)}%`;
 }
 
-function renderFeedback(q, selected){
-  if(selected === null){
+function renderFeedback(state){
+  if(state.saving){
+    feedbackEl.className = 'feedback saving';
+    feedbackEl.innerHTML = '<h3>Gravando resposta...</h3>';
+    return;
+  }
+
+  if(!state.saved){
+    if(state.error){
+      feedbackEl.className = 'feedback bad';
+      feedbackEl.innerHTML = `<h3>${escapeHtml(state.error)}</h3>`;
+      return;
+    }
     feedbackEl.className = 'feedback hidden';
     feedbackEl.innerHTML = '';
     return;
   }
 
-  const ok = selected === q.answer;
-  feedbackEl.className = 'feedback ' + (ok ? 'ok' : 'bad');
-  const title = ok ? '✅ Você acertou.' : `❌ Você errou. Resposta correta: ${letter(q.answer)}.`;
-  const items = q.options.map((opt, i) => {
-    const mark = i === q.answer ? '✅' : '❌';
-    const chosen = i === selected ? ' <strong>(sua resposta)</strong>' : '';
-    return `<li><strong>${mark} ${letter(i)})</strong>${chosen} ${q.explanations[i]}</li>`;
+  feedbackEl.className = 'feedback ' + (state.isCorrect ? 'ok' : 'bad');
+  const title = state.isCorrect
+    ? 'Voce acertou.'
+    : `Voce errou. Resposta correta: ${letter(state.correctAnswer)}.`;
+  const items = state.feedback.map((item) => {
+    const mark = item.is_correct ? 'Correta' : 'Incorreta';
+    const chosen = item.selected ? ' <strong>(sua resposta)</strong>' : '';
+    return `<li><strong>${mark} ${letter(item.index)})</strong>${chosen} ${escapeHtml(item.explanation)}</li>`;
   }).join('');
-  feedbackEl.innerHTML = `<h3>${title}</h3><p>Comentário item a item:</p><ul>${items}</ul>`;
+  feedbackEl.innerHTML = `<h3>${title}</h3><p>Justificativa item a item:</p><ul>${items}</ul>`;
 }
 
 function render(){
+  if(QUESTIONS.length === 0){
+    questionTitle.textContent = 'Nenhuma pergunta encontrada';
+    questionText.textContent = 'Cadastre ou migre as perguntas para o banco de dados.';
+    return;
+  }
+
   const q = QUESTIONS[current];
+  const state = answers[current];
   themeName.textContent = q.theme;
-  questionCounter.textContent = `Questão ${current + 1} de ${QUESTIONS.length}`;
+  questionCounter.textContent = `Questao ${current + 1} de ${QUESTIONS.length}`;
   progressFill.style.width = `${((current + 1) / QUESTIONS.length) * 100}%`;
-  questionTitle.textContent = `Questão ${q.id}`;
+  questionTitle.textContent = `Questao ${current + 1}`;
   questionText.textContent = q.stem;
 
   optionsEl.innerHTML = '';
-  q.options.forEach((opt, i) => {
+  q.options.forEach((opt) => {
+    const optionIndex = opt.index;
     const label = document.createElement('label');
     label.className = 'option';
-    if(answers[current] !== null){
-      if(i === q.answer) label.classList.add('correct');
-      if(i === answers[current] && i !== q.answer) label.classList.add('wrong');
+    if(state.saved){
+      if(optionIndex === state.correctAnswer) label.classList.add('correct');
+      if(optionIndex === state.selected && optionIndex !== state.correctAnswer) label.classList.add('wrong');
     }
     label.innerHTML = `
-      <input type="radio" name="answer" ${answers[current] === i ? 'checked' : ''}>
-      <span class="letter">${letter(i)})</span>
-      <span>${opt}</span>
+      <input type="radio" name="answer" ${state.selected === optionIndex ? 'checked' : ''} ${state.saving ? 'disabled' : ''}>
+      <span class="letter">${letter(optionIndex)})</span>
+      <span>${escapeHtml(opt.text)}</span>
     `;
     label.onclick = () => {
-      answers[current] = i;
-      saveAnswer(current, i);
-      updateScore();
-      render();
+      if(state.saving) return;
+      saveAnswer(current, optionIndex);
     };
     optionsEl.appendChild(label);
   });
 
-  renderFeedback(q, answers[current]);
+  renderFeedback(state);
   prevBtn.disabled = current === 0;
   nextBtn.disabled = current === QUESTIONS.length - 1;
   renderGrid();
@@ -214,11 +290,14 @@ startForm.onsubmit = async (event) => {
       body: JSON.stringify({ name })
     });
 
+    normalizeQuestions(data.questions || []);
     attemptId = data.attempt_id;
     respondentName = data.respondent_name;
     activeRespondent.textContent = `Respondente: ${respondentName}`;
     startScreen.classList.add('hidden');
     quizScreen.classList.remove('hidden');
+    current = 0;
+    startTimer();
     render();
   }catch(error){
     setStartError(error.message);
