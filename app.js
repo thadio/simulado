@@ -136,6 +136,7 @@ async function saveAnswer(questionIndex, selected){
   if(!attemptId) return;
   const q = QUESTIONS[questionIndex];
   const state = answers[questionIndex];
+  if(state.saved) return;
   state.selected = selected;
   state.saving = true;
   state.saved = false;
@@ -208,6 +209,27 @@ function renderFeedback(state){
       feedbackEl.innerHTML = `<h3>${escapeHtml(state.error)}</h3>`;
       return;
     }
+
+    if(state.selected !== null){
+      const q = QUESTIONS[current];
+      const selectedOption = q.options.find((opt) => opt.index === state.selected);
+      feedbackEl.className = 'feedback confirm';
+      feedbackEl.innerHTML = `
+        <h3>Confirmar resposta ${letter(state.selected)})?</h3>
+        <p>${escapeHtml(selectedOption ? selectedOption.text : '')}</p>
+        <div class="confirm-actions">
+          <button type="button" id="confirmAnswerBtn">Confirmar</button>
+          <button type="button" id="changeAnswerBtn" class="secondary">Mudar resposta</button>
+        </div>
+      `;
+      document.getElementById('confirmAnswerBtn').onclick = () => saveAnswer(current, state.selected);
+      document.getElementById('changeAnswerBtn').onclick = () => {
+        state.selected = null;
+        render();
+      };
+      return;
+    }
+
     feedbackEl.className = 'feedback hidden';
     feedbackEl.innerHTML = '';
     return;
@@ -250,13 +272,15 @@ function render(){
       if(optionIndex === state.selected && optionIndex !== state.correctAnswer) label.classList.add('wrong');
     }
     label.innerHTML = `
-      <input type="radio" name="answer" ${state.selected === optionIndex ? 'checked' : ''} ${state.saving ? 'disabled' : ''}>
+      <input type="radio" name="answer" ${state.selected === optionIndex ? 'checked' : ''} ${state.saving || state.saved ? 'disabled' : ''}>
       <span class="letter">${letter(optionIndex)})</span>
       <span>${escapeHtml(opt.text)}</span>
     `;
     label.onclick = () => {
-      if(state.saving) return;
-      saveAnswer(current, optionIndex);
+      if(state.saving || state.saved) return;
+      state.selected = optionIndex;
+      state.error = '';
+      render();
     };
     optionsEl.appendChild(label);
   });
