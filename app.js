@@ -1,6 +1,17 @@
 let current = 0;
 const answers = Array(QUESTIONS.length).fill(null);
+let attemptId = null;
+let respondentName = '';
 
+const startScreen = document.getElementById('startScreen');
+const quizScreen = document.getElementById('quizScreen');
+const startForm = document.getElementById('startForm');
+const respondentNameInput = document.getElementById('respondentName');
+const startBtn = document.getElementById('startBtn');
+const startError = document.getElementById('startError');
+const rankingBody = document.getElementById('rankingBody');
+const refreshRankingBtn = document.getElementById('refreshRankingBtn');
+const activeRespondent = document.getElementById('activeRespondent');
 const scoreEl = document.getElementById('score');
 const answeredEl = document.getElementById('answered');
 const themeName = document.getElementById('themeName');
@@ -15,6 +26,93 @@ const nextBtn = document.getElementById('nextBtn');
 const questionGrid = document.getElementById('questionGrid');
 
 function letter(i){ return String.fromCharCode(65+i); }
+
+function formatDate(value){
+  if(!value) return '-';
+  const date = new Date(value.replace(' ', 'T'));
+  if(Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString('pt-BR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
+function escapeHtml(value){
+  return String(value).replace(/[&<>"']/g, (char) => ({
+    '&': '&amp;',
+    '<': '&lt;',
+    '>': '&gt;',
+    '"': '&quot;',
+    "'": '&#039;'
+  })[char]);
+}
+
+function setStartError(message){
+  startError.textContent = message || '';
+  startError.classList.toggle('hidden', !message);
+}
+
+async function api(action, options = {}){
+  const response = await fetch(`api.php?action=${action}`, {
+    headers: { 'Content-Type': 'application/json' },
+    ...options
+  });
+  const data = await response.json();
+  if(!response.ok || !data.ok){
+    throw new Error(data.message || 'Erro ao acessar o servidor.');
+  }
+  return data;
+}
+
+function renderRanking(rows){
+  if(!rows.length){
+    rankingBody.innerHTML = '<tr><td colspan="6">Nenhuma tentativa registrada ainda.</td></tr>';
+    return;
+  }
+
+  rankingBody.innerHTML = rows.map(row => `
+    <tr>
+      <td>${row.position}</td>
+      <td>${escapeHtml(row.respondent_name)}</td>
+      <td>${row.answered_count}</td>
+      <td>${row.correct_count}</td>
+      <td>${Number(row.percent_correct).toFixed(2)}%</td>
+      <td>${formatDate(row.updated_at || row.started_at)}</td>
+    </tr>
+  `).join('');
+}
+
+async function loadRanking(){
+  try{
+    const data = await api('ranking');
+    renderRanking(data.ranking || []);
+  }catch(error){
+    rankingBody.innerHTML = `<tr><td colspan="6">${error.message}</td></tr>`;
+  }
+}
+
+async function saveAnswer(questionIndex, selected){
+  if(!attemptId) return;
+  const q = QUESTIONS[questionIndex];
+
+  try{
+    const data = await api('answer', {
+      method: 'POST',
+      body: JSON.stringify({
+        attempt_id: attemptId,
+        question_id: q.id,
+        selected_answer: selected,
+        correct_answer: q.answer
+      })
+    });
+    if(data.ranking) renderRanking(data.ranking);
+  }catch(error){
+    setStartError(`Não foi possível gravar a resposta: ${error.message}`);
+  }
+}
 
 function renderGrid(){
   questionGrid.innerHTML = '';
@@ -79,11 +177,8 @@ function render(){
       <span>${opt}</span>
     `;
     label.onclick = () => {
-      if(answers[current] === null){
-        answers[current] = i;
-      } else {
-        answers[current] = i;
-      }
+      answers[current] = i;
+      saveAnswer(current, i);
       updateScore();
       render();
     };
@@ -99,5 +194,37 @@ function render(){
 
 prevBtn.onclick = () => { if(current > 0){ current--; render(); } };
 nextBtn.onclick = () => { if(current < QUESTIONS.length - 1){ current++; render(); } };
+refreshRankingBtn.onclick = loadRanking;
 
-render();
+startForm.onsubmit = async (event) => {
+  event.preventDefault();
+  setStartError('');
+
+  const name = respondentNameInput.value.trim();
+  if(!name){
+    setStartError('Informe o nome do respondente.');
+    respondentNameInput.focus();
+    return;
+  }
+
+  startBtn.disabled = true;
+  try{
+    const data = await api('start', {
+      method: 'POST',
+      body: JSON.stringify({ name })
+    });
+
+    attemptId = data.attempt_id;
+    respondentName = data.respondent_name;
+    activeRespondent.textContent = `Respondente: ${respondentName}`;
+    startScreen.classList.add('hidden');
+    quizScreen.classList.remove('hidden');
+    render();
+  }catch(error){
+    setStartError(error.message);
+  }finally{
+    startBtn.disabled = false;
+  }
+};
+
+loadRanking();

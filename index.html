@@ -8,10 +8,53 @@
 </head>
 <body>
   <div class="app">
+    <section id="startScreen" class="start-screen">
+      <div class="intro-panel">
+        <div>
+          <h1>Simulado Java — POO II</h1>
+          <p>Informe seu nome para iniciar uma nova tentativa.</p>
+        </div>
+        <form id="startForm" class="start-form">
+          <label for="respondentName">Nome do respondente</label>
+          <div class="start-row">
+            <input id="respondentName" name="respondentName" type="text" maxlength="120" autocomplete="name" required>
+            <button id="startBtn" type="submit">Iniciar simulado</button>
+          </div>
+          <p id="startError" class="form-error hidden"></p>
+        </form>
+      </div>
+
+      <section class="ranking-card">
+        <div class="ranking-head">
+          <h2>Ranking</h2>
+          <button id="refreshRankingBtn" class="secondary" type="button">Atualizar</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Posição</th>
+                <th>Nome</th>
+                <th>Respondidas</th>
+                <th>Acertos</th>
+                <th>% acertos</th>
+                <th>Data</th>
+              </tr>
+            </thead>
+            <tbody id="rankingBody">
+              <tr><td colspan="6">Carregando ranking...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </section>
+
+    <section id="quizScreen" class="hidden">
     <header class="top">
       <div>
         <h1>Simulado Java — POO II</h1>
         <p>List, Map, Clean Code, Classe Abstrata, Interface, Arquitetura em Camadas, JDBC, Coesão, Acoplamento e Números Mágicos</p>
+        <small id="activeRespondent"></small>
       </div>
       <div class="score-card">
         <span id="score">0</span>/<span id="answered">0</span>
@@ -44,6 +87,7 @@
     <section class="navigator">
       <h3>Ir para qualquer questão</h3>
       <div id="questionGrid" class="question-grid"></div>
+    </section>
     </section>
   </div>
 
