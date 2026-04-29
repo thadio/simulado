@@ -266,7 +266,7 @@ function seed_questions(PDO $pdo): void
         @set_time_limit(180);
     }
 
-    $seedVersion = '2026-04-29-1';
+    $seedVersion = '2026-04-29-2';
     $count = (int) $pdo->query('SELECT COUNT(*) FROM simulado_questions')->fetchColumn();
     $versionStmt = $pdo->prepare('SELECT meta_value FROM simulado_schema_meta WHERE meta_key = :key');
     $versionStmt->execute(['key' => 'questions_seed_version']);
@@ -368,7 +368,7 @@ function exam_options(): array
     return [
         'concepts' => [
             'label' => 'Bloco de conceitos',
-            'question_ids' => range(201, 240),
+            'question_ids' => range(201, 280),
         ],
         'general' => [
             'label' => 'Bloco geral',

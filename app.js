@@ -5,6 +5,7 @@ let attemptId = null;
 let respondentName = '';
 let startedAt = null;
 let timerId = null;
+let finalResultVisible = false;
 
 const startScreen = document.getElementById('startScreen');
 const quizScreen = document.getElementById('quizScreen');
@@ -206,6 +207,38 @@ function updateScore(serverScore = null){
   percentEl.textContent = `${percent.toFixed(1)}%`;
 }
 
+function scoreSummary(){
+  const answered = answers.filter(a => a.saved).length;
+  const score = answers.filter(a => a.saved && a.isCorrect).length;
+  const percent = answered === 0 ? 0 : (score / answered) * 100;
+  return { answered, score, percent };
+}
+
+function firstUnansweredIndex(){
+  return answers.findIndex(a => !a.saved);
+}
+
+function showFinalResult(){
+  finalResultVisible = true;
+  const summary = scoreSummary();
+  themeName.textContent = 'Resultado final';
+  questionCounter.textContent = `${summary.answered} de ${QUESTIONS.length} respondidas`;
+  progressFill.style.width = '100%';
+  questionTitle.textContent = 'Resultado final';
+  questionText.textContent = `${respondentName}, voce concluiu esta prova.`;
+  optionsEl.innerHTML = '';
+  feedbackEl.className = 'feedback ' + (summary.percent >= 70 ? 'ok' : 'bad');
+  feedbackEl.innerHTML = `
+    <h3>${summary.score} acertos de ${QUESTIONS.length}</h3>
+    <p>Aproveitamento: ${summary.percent.toFixed(1)}%.</p>
+  `;
+  prevBtn.disabled = QUESTIONS.length === 0;
+  nextBtn.disabled = true;
+  nextBtn.textContent = 'Concluido';
+  renderGrid();
+  updateScore();
+}
+
 function renderFeedback(state){
   if(state.saving){
     feedbackEl.className = 'feedback saving';
@@ -266,6 +299,11 @@ function render(){
     return;
   }
 
+  if(finalResultVisible){
+    showFinalResult();
+    return;
+  }
+
   const q = QUESTIONS[current];
   const state = answers[current];
   themeName.textContent = q.theme;
@@ -299,13 +337,42 @@ function render(){
 
   renderFeedback(state);
   prevBtn.disabled = current === 0;
-  nextBtn.disabled = current === QUESTIONS.length - 1;
+  if(current === QUESTIONS.length - 1){
+    nextBtn.textContent = 'Concluir';
+    nextBtn.disabled = !state.saved;
+  }else{
+    nextBtn.textContent = 'Próxima →';
+    nextBtn.disabled = false;
+  }
   renderGrid();
   updateScore();
 }
 
-prevBtn.onclick = () => { if(current > 0){ current--; render(); } };
-nextBtn.onclick = () => { if(current < QUESTIONS.length - 1){ current++; render(); } };
+prevBtn.onclick = () => {
+  if(finalResultVisible){
+    finalResultVisible = false;
+    current = QUESTIONS.length - 1;
+    render();
+    return;
+  }
+  if(current > 0){ current--; render(); }
+};
+nextBtn.onclick = () => {
+  if(current < QUESTIONS.length - 1){
+    current++;
+    render();
+    return;
+  }
+
+  const unansweredIndex = firstUnansweredIndex();
+  if(unansweredIndex !== -1){
+    current = unansweredIndex;
+    render();
+    return;
+  }
+
+  showFinalResult();
+};
 refreshRankingBtn.onclick = loadRanking;
 
 startForm.onsubmit = async (event) => {
@@ -334,6 +401,7 @@ startForm.onsubmit = async (event) => {
     startScreen.classList.add('hidden');
     quizScreen.classList.remove('hidden');
     current = 0;
+    finalResultVisible = false;
     startTimer();
     render();
   }catch(error){
