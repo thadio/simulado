@@ -145,8 +145,11 @@ function setup_schema(PDO $pdo): void
 
 function column_exists(PDO $pdo, string $table, string $column): bool
 {
-    $stmt = $pdo->prepare("SHOW COLUMNS FROM {$table} LIKE :column");
-    $stmt->execute(['column' => $column]);
+    if (!preg_match('/^[a-zA-Z0-9_]+$/', $table) || !preg_match('/^[a-zA-Z0-9_]+$/', $column)) {
+        throw new InvalidArgumentException('Nome de tabela ou coluna inválido.');
+    }
+
+    $stmt = $pdo->query("SHOW COLUMNS FROM `{$table}` LIKE " . $pdo->quote($column));
     return (bool) $stmt->fetch();
 }
 
